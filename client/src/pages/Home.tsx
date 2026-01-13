@@ -19,7 +19,7 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<ConversionProgress | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { convertZipToPdf } = useZplToPdf();
+  const { convertZplToPdf } = useZplToPdf();
 
   useEffect(() => {
     (window as any).JSZip = JSZip;
@@ -35,7 +35,7 @@ export default function Home() {
 
     try {
       console.log('Iniciando conversao...');
-      await convertZipToPdf(file, (newProgress) => {
+      await convertZplToPdf(file, (newProgress: ConversionProgress) => {
         console.log('Progresso:', newProgress);
         setProgress(newProgress);
       });
@@ -78,25 +78,26 @@ export default function Home() {
         <Card className="p-8 shadow-lg">
           {/* Upload Area */}
           <div className="mb-8">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".zip"
-              onChange={handleFileSelect}
-              disabled={isProcessing}
-              className="hidden"
-            />
+
 
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isProcessing}
               className="w-full border-2 border-dashed border-slate-300 rounded-lg p-8 hover:border-slate-400 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,.zip"
+                onChange={handleFileSelect}
+                disabled={isProcessing}
+                className="hidden"
+              />
               <div className="flex flex-col items-center gap-3">
                 <Upload className="w-12 h-12 text-slate-400" />
                 <div>
                   <p className="font-semibold text-slate-900">
-                    {isProcessing ? 'Processando...' : 'Clique para selecionar arquivo ZIP'}
+                    {isProcessing ? 'Processando...' : 'Clique para selecionar arquivo TXT ou ZIP'}
                   </p>
                   <p className="text-sm text-slate-500 mt-1">
                     ou arraste e solte aqui
@@ -144,8 +145,8 @@ export default function Home() {
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <h3 className="font-semibold text-blue-900 mb-2">Como usar:</h3>
               <ul className="text-sm text-blue-800 space-y-1">
-                <li>• Coloque todos seus arquivos ZPL em um arquivo ZIP</li>
-                <li>• Clique no botão acima para selecionar o ZIP</li>
+                <li>• Exporte o arquivo TXT de etiquetas da Shopee</li>
+                <li>• Clique no botão acima para selecionar o TXT</li>
                 <li>• A conversão começará automaticamente</li>
                 <li>• O PDF será baixado quando terminar</li>
                 <li>• Sem limites de quantidade de etiquetas!</li>

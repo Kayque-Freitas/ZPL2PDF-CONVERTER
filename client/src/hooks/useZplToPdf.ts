@@ -1,5 +1,4 @@
 import { jsPDF } from 'jspdf';
-import JSZip from 'jszip';
 import { ready, zplToBase64Async } from 'zpl-renderer-js';
 
 interface ConversionProgress {
@@ -11,12 +10,17 @@ interface ConversionProgress {
 }
 
 interface UseZplToPdfReturn {
-  convertZipToPdf: (file: File, onProgress?: (progress: ConversionProgress) => void) => Promise<void>;
+  convertZplToPdf: (file: File, onProgress?: (progress: ConversionProgress) => void) => Promise<void>;
 }
 
 /**
- * Hook para converter arquivos ZPL para PDF
+ * Hook para converter arquivo TXT com múltiplas etiquetas ZPL para PDF
  * Otimizado para etiquetas da Shopee (10x15cm) SEM LIMITES DE VOLUME
+ * 
+ * Formato esperado: Arquivo TXT contendo múltiplas etiquetas ZPL da Shopee
+ * Cada etiqueta é composta por:
+ * - ~DGR:DEMO.GRF,... (dados gráficos comprimidos)
+ * - ^XA...^XZ (comando ZPL que referencia o gráfico)
  * 
  * Dimensões:
  * - Largura: 10cm = 100mm
@@ -30,7 +34,7 @@ interface UseZplToPdfReturn {
  * - Suporta centenas ou milhares de etiquetas
  */
 export function useZplToPdf(): UseZplToPdfReturn {
-  const convertZipToPdf = async (
+  const convertZplToPdf = async (
     file: File,
     onProgress?: (progress: ConversionProgress) => void
   ): Promise<void> => {
@@ -39,21 +43,38 @@ export function useZplToPdf(): UseZplToPdfReturn {
       await ready;
 
       // Validar arquivo
-      if (!file.name.toLowerCase().endsWith('.zip')) {
-        throw new Error('Por favor, selecione um arquivo ZIP válido');
+      const fileName = file.name.toLowerCase();
+      if (!fileName.endsWith('.txt') && !fileName.endsWith('.zip')) {
+        throw new Error('Por favor, selecione um arquivo TXT ou ZIP válido');
       }
 
-      // Ler arquivo ZIP
-      const zip = new JSZip();
-      const zipContent = await zip.loadAsync(file);
+      let zplContent: string;
 
-      // Filtrar arquivos ZPL
-      const zplFiles = Object.keys(zipContent.files)
-        .filter(name => name.toLowerCase().endsWith('.zpl') && !zipContent.files[name].dir)
-        .sort();
+      // Se for ZIP, extrair o arquivo TXT
+      if (fileName.endsWith('.zip')) {
+        const { default: JSZip } = await import('jszip');
+        const zip = new JSZip();
+        const zipContent = await zip.loadAsync(file);
 
-      if (zplFiles.length === 0) {
-        throw new Error('Nenhum arquivo ZPL encontrado no ZIP');
+        // Procurar por arquivo TXT no ZIP
+        const txtFiles = Object.keys(zipContent.files)
+          .filter(name => name.toLowerCase().endsWith('.txt') && !zipContent.files[name].dir);
+
+        if (txtFiles.length === 0) {
+          throw new Error('Nenhum arquivo TXT encontrado no ZIP');
+        }
+
+        zplContent = await zipContent.files[txtFiles[0]].async('string');
+      } else {
+        // Se for TXT, ler diretamente
+        zplContent = await file.text();
+      }
+
+      // Extrair etiquetas ZPL individuais
+      const zplLabels = extractZplLabels(zplContent);
+
+      if (zplLabels.length === 0) {
+        throw new Error('Nenhuma etiqueta ZPL encontrada no arquivo');
       }
 
       // Criar PDF com dimensões 10x15cm (100x150mm)
@@ -63,28 +84,24 @@ export function useZplToPdf(): UseZplToPdfReturn {
         format: [100, 150],
       });
 
-      // Processar cada arquivo ZPL com controle de memória
-      // Renderiza sequencialmente para evitar sobrecarga
-      for (let i = 0; i < zplFiles.length; i++) {
-        const fileName = zplFiles[i];
+      // Processar cada etiqueta ZPL com controle de memória
+      for (let i = 0; i < zplLabels.length; i++) {
+        const label = zplLabels[i];
         
         if (onProgress) {
           onProgress({
             current: i + 1,
-            total: zplFiles.length,
-            fileName,
+            total: zplLabels.length,
+            fileName: `Etiqueta ${i + 1}`,
             status: 'processing',
-            message: `Processando ${fileName}... (${i + 1}/${zplFiles.length})`,
+            message: `Processando etiqueta ${i + 1}/${zplLabels.length}...`,
           });
         }
 
         try {
-          // Ler conteúdo do arquivo ZPL
-          const zplContent = await zipContent.files[fileName].async('string');
-
           // Renderizar ZPL para Base64 PNG
           // Dimensões: 100mm x 150mm com 8 dpmm (203 DPI)
-          const base64Image = await zplToBase64Async(zplContent, 100, 150, 8);
+          const base64Image = await zplToBase64Async(label, 100, 150, 8);
 
           // Adicionar página se não for a primeira
           if (i > 0) {
@@ -100,17 +117,17 @@ export function useZplToPdf(): UseZplToPdfReturn {
             await new Promise(resolve => setTimeout(resolve, 10));
           }
         } catch (err) {
-          console.error(`Erro ao processar ${fileName}:`, err);
+          console.error(`Erro ao processar etiqueta ${i + 1}:`, err);
           if (onProgress) {
             onProgress({
               current: i + 1,
-              total: zplFiles.length,
-              fileName,
+              total: zplLabels.length,
+              fileName: `Etiqueta ${i + 1}`,
               status: 'error',
-              message: `Erro ao processar ${fileName} - continuando...`,
+              message: `Erro ao processar etiqueta ${i + 1} - continuando...`,
             });
           }
-          // Continuar com o próximo arquivo (não falhar tudo)
+          // Continuar com a próxima etiqueta (não falhar tudo)
         }
       }
 
@@ -119,11 +136,11 @@ export function useZplToPdf(): UseZplToPdfReturn {
 
       if (onProgress) {
         onProgress({
-          current: zplFiles.length,
-          total: zplFiles.length,
+          current: zplLabels.length,
+          total: zplLabels.length,
           fileName: 'Concluído',
           status: 'completed',
-          message: `${zplFiles.length} etiqueta(s) convertida(s) com sucesso! PDF pronto para download.`,
+          message: `${zplLabels.length} etiqueta(s) convertida(s) com sucesso! PDF pronto para download.`,
         });
       }
     } catch (err) {
@@ -144,6 +161,44 @@ export function useZplToPdf(): UseZplToPdfReturn {
   };
 
   return {
-    convertZipToPdf,
+    convertZplToPdf,
   };
+}
+
+/**
+ * Extrai etiquetas ZPL individuais de um arquivo TXT
+ * Suporta formato da Shopee onde cada etiqueta é composta por:
+ * - ~DGR:DEMO.GRF,... (dados gráficos)
+ * - ^XA...^XZ (comando ZPL)
+ */
+function extractZplLabels(content: string): string[] {
+  const labels: string[] = [];
+  
+  // Procurar por padrão ~DG seguido de ^XA...^XZ
+  // Cada etiqueta começa com ~DG e termina com ^XZ
+  
+  let currentPos = 0;
+  
+  while (currentPos < content.length) {
+    // Procurar pelo próximo ~DG
+    const dgStart = content.indexOf('~DG', currentPos);
+    if (dgStart < 0) break;
+    
+    // Procurar pelo ^XZ que fecha a etiqueta
+    const xzEnd = content.indexOf('^XZ', dgStart);
+    if (xzEnd < 0) break;
+    
+    // Extrair a etiqueta completa (de ~DG até ^XZ)
+    const etiqueta = content.substring(dgStart, xzEnd + 3);
+    
+    // Verificar se contém ^XA e ^XZ (validação)
+    if (etiqueta.includes('^XA') && etiqueta.includes('^XZ')) {
+      labels.push(etiqueta);
+    }
+    
+    // Mover para a próxima etiqueta
+    currentPos = xzEnd + 3;
+  }
+  
+  return labels;
 }
